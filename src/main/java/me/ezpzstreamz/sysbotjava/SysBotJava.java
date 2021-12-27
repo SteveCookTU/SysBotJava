@@ -86,12 +86,9 @@ public class SysBotJava implements Runnable {
             tcTemp.getChat().getEventManager().onEvent(ChannelMessageEvent.class, event -> {
                 if (event.getMessage().equalsIgnoreCase("!q join")) {
                     if (!queueContainsUser("twitch", event.getUser().getName())) {
-                        System.out.println(event.getUser().getName());
-                        event.getTwitchChat().sendPrivateMessage(event.getUser().getName(),
+                        event.reply(event.getTwitchChat(),
                                 "You have joined the queue. There are " + getQueueSize() +
                                         " users in front of you. You will receive a link code when it is your turn.");
-                        event.reply(event.getTwitchChat(),
-                                "@" + event.getUser().getName() + " has been added to the queue. Check your whispers.");
                         addToQueue("twitch", event.getUser().getName());
                     } else {
                         event.reply(event.getTwitchChat(),
@@ -113,6 +110,7 @@ public class SysBotJava implements Runnable {
         userList = new ArrayDeque<>();
         jda = jdaTemp;
         twitchClient = tcTemp;
+        sbc.sendCommand("configure keySleepTime 35");
     }
 
     public synchronized void addToQueue(String mode, String userID) {
@@ -167,21 +165,21 @@ public class SysBotJava implements Runnable {
     public void startTradeRoute(String linkCode) {
         try {
             //Join union room
-            sbc.click("Y", 1200);
-            sbc.click("DRIGHT", 1200);
-            sbc.click("A", 1200);
-            sbc.click("A", 1200);
-            sbc.click("A", 1300);
-            sbc.click("DDOWN", 500);
-            sbc.click("DDOWN", 500);
+            sbc.click("Y", 1500);
+            sbc.click("DRIGHT", 1500);
             sbc.click("A", 1500);
-            sbc.click("A", 1000);
+            sbc.click("A", 1500);
+            sbc.click("A", 1500);
+            sbc.click("DDOWN", 1000);
+            sbc.click("DDOWN", 1000);
+            sbc.click("A", 1500);
+            sbc.click("A", 1500);
 
             //waitForConnection
             Thread.sleep(4000);
 
-            sbc.click("A", 1200);
-            sbc.click("A", 1200);
+            sbc.click("A", 1500);
+            sbc.click("A", 1500);
             showHider();
             sbc.click("A", 9000);
             //System.out.println("Link Code: " + linkCode);
