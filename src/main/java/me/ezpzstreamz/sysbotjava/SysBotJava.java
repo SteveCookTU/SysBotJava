@@ -193,10 +193,10 @@ public class SysBotJava implements Runnable {
             Thread.sleep(5000);
 
             //Start and wait for trade
-            sbc.click("Y", 1100);
-            sbc.click("A", 1100);
-            sbc.click("DDOWN", 1100);
-            sbc.click("A", 1100);
+            sbc.click("Y", 1200);
+            sbc.click("A", 1200);
+            sbc.click("DDOWN", 1200);
+            sbc.click("A", 1200);
 
             sbc.poke(pointers.get("b1s1"), "0x" + Util.bytesToHex(Util.encryptPb8(pkm)));
 
@@ -220,6 +220,8 @@ public class SysBotJava implements Runnable {
 
                 Thread.sleep(1000);
             }
+
+            startTime += 15;
 
             sbc.click("A", 1000);
             sbc.click("A", 1000);
@@ -250,6 +252,8 @@ public class SysBotJava implements Runnable {
                     }
                     Thread.sleep(500);
                 }
+
+                startTime += 15;
 
                 if(checkIfCancelled(currentPhase)) return;
                 currentPhase = nextPhase;
@@ -334,17 +338,17 @@ public class SysBotJava implements Runnable {
     }
 
     public void leaveTrade() throws InterruptedException {
-        sbc.click("B", 1000);
-        sbc.click("DUP", 1000);
-        sbc.click("A", 1000);
-        sbc.click("A", 1000);
+        sbc.click("B", 1200);
+        sbc.click("DUP", 1200);
+        sbc.click("A", 1200);
+        sbc.click("A", 1200);
     }
 
     public void leaveUnionRoom() throws InterruptedException {
-        sbc.click("B", 1000);
-        sbc.click("Y", 1000);
-        sbc.click("DDOWN", 1000);
-        sbc.click("A", 5000);
+        sbc.click("B", 1200);
+        sbc.click("Y", 1200);
+        sbc.click("DDOWN", 1200);
+        sbc.click("A", 6000);
     }
 
     public void runDisc(Map.Entry<String, String> entry) {
