@@ -21,27 +21,21 @@ public class SlashCommandListener implements EventListener {
             if (e.getName().equalsIgnoreCase("queue")) {
                 OptionMapping option = e.getOption("join_leave");
                 if (option != null && option.getAsString().equalsIgnoreCase("join")) {
-                    if (sbj.queueContainsUser(e.getUser().getIdLong())) {
+                    if (sbj.queueContainsUser("discord", e.getUser().getId())) {
                         e.reply("You are already in the queue. Position: " +
-                                sbj.getQueuePosition(e.getUser().getIdLong())).setEphemeral(true).queue();
+                                sbj.getQueuePosition("discord", e.getUser().getId())).setEphemeral(true).queue();
                     } else {
                         e.getUser().openPrivateChannel().queue(c -> e.reply(
                                                 "You have joined the queue. There are " + sbj.getQueueSize() +
                                                         " users in front of you.").setEphemeral(true)
-                                        .queue(m -> sbj.addToQueue(e.getUser().getIdLong()),
+                                        .queue(m -> sbj.addToQueue("discord", e.getUser().getId()),
                                                 err -> e.reply("Unable to open DMs. Please enable private messages.")
-                                                        .setEphemeral(true)
-                                                        .queue()),
+                                                        .setEphemeral(true).queue()),
                                 err -> e.reply("Unable to open DMs. Please enable private messages.").setEphemeral(true)
                                         .queue());
                     }
-                } else if(option != null && option.getAsString().equalsIgnoreCase("leave")) {
-                    if(sbj.queueContainsUser(e.getUser().getIdLong())) {
-                        sbj.removeFromQueue(e.getUser().getIdLong());
-                        e.reply("You have been removed from the queue.").setEphemeral(true).queue();
-                    } else {
-                        e.reply("You are not currently in the queue.").setEphemeral(true).queue();
-                    }
+                } else if (option != null && option.getAsString().equalsIgnoreCase("leave")) {
+                    e.reply("Leaving the queue is temporarily disabled.").setEphemeral(true).queue();
                 }
             }
 
