@@ -24,5 +24,13 @@ jobs:
         distribution: 'adopt'
         cache: maven
     - uses: s4u/maven-settings-action@v2.4.1
+      with:
+        githubServer: false
+        servers: |
+          [{
+            "id": "github",
+            "username": "${{ secrets.SERVER_USERNAME }}",
+            "password": "${{ secrets.SERVER_TOKEN }}"
+          }]
     - name: Build with Maven
       run: mvn -B package --file pom.xml
