@@ -4,6 +4,7 @@ import com.github.philippheuer.credentialmanager.domain.OAuth2Credential;
 import com.github.twitch4j.TwitchClient;
 import com.github.twitch4j.TwitchClientBuilder;
 import com.github.twitch4j.chat.events.channel.ChannelMessageEvent;
+import com.github.twitch4j.common.events.user.PrivateMessageEvent;
 import me.ezpzstreamz.sysbotcontroller.SysBotController;
 import me.ezpzstreamz.sysbotjava.listeners.SlashCommandListener;
 import me.ezpzstreamz.sysbotjava.util.Util;
@@ -35,6 +36,9 @@ public class SysBotJava implements Runnable {
     private final Map<String, byte[]> pkmFiles;
 
     private long startTime;
+    private boolean waitingOnTwitch = false;
+    private String linkCode = "";
+    private String currentUser = "";
 
     private static final List<Short> tradeSpecies = new ArrayList<>() {{
         add((short) 61);
@@ -84,27 +88,6 @@ public class SysBotJava implements Runnable {
             System.out.println("Logging into twitch");
             OAuth2Credential credential = new OAuth2Credential("twitch", token);
             tcTemp = TwitchClientBuilder.builder().withEnableChat(true).withChatAccount(credential).build();
-            tcTemp.getChat().joinChannel("EzPzStreamz");
-            tcTemp.getChat().getEventManager().onEvent(ChannelMessageEvent.class, event -> {
-                if (event.getMessage().equalsIgnoreCase("!q join")) {
-                    if (!queueContainsUser("twitch", event.getUser().getName())) {
-                        event.reply(event.getTwitchChat(),
-                                "You have joined the queue. There are " + getQueueSize() +
-                                        " users in front of you. You will receive a link code when it is your turn.");
-                        addToQueue("twitch", event.getUser().getName());
-                    } else {
-                        event.reply(event.getTwitchChat(),
-                                "@" + event.getUser().getName() + " is already in the queue.");
-                    }
-                } else if (event.getMessage().equalsIgnoreCase("!q pos")) {
-                    int pos = getQueuePosition("twitch", event.getUser().getName());
-                    if (pos != -1) {
-                        event.reply(event.getTwitchChat(), "@" + event.getUser().getName() + " is position " + pos);
-                    } else {
-                        event.reply(event.getTwitchChat(), "@" + event.getUser().getName() + " is not in the queue.");
-                    }
-                }
-            });
         }
         File pokemonFolder = new File("pkb");
         FileFilter filter = new WildcardFileFilter("*.pb8");
@@ -124,6 +107,52 @@ public class SysBotJava implements Runnable {
             scheduler.scheduleAtFixedRate(() -> twitchClient.getChat().sendMessage("EzPzStreamz",
                             "Welcome to the beta testing of the bot! Type \"!q join\" to join and \"!q pos\" to see your current position in the queue. "),
                     1, 5, TimeUnit.MINUTES);
+
+            twitchClient.getChat().joinChannel("EzPzStreamz");
+            twitchClient.getChat().getEventManager().onEvent(ChannelMessageEvent.class, event -> {
+                if (event.getMessage().equalsIgnoreCase("!q join")) {
+                    if (!queueContainsUser("twitch", event.getUser().getName())) {
+                        if (getQueueSize() == 0) {
+                            event.reply(event.getTwitchChat(),
+                                    "You have joined the queue. You are first in line!");
+                        } else {
+                            event.reply(event.getTwitchChat(),
+                                    "You have joined the queue. There are " + getQueueSize() +
+                                            " users in front of you. You will receive a link code when it is your turn.");
+                        }
+
+                        addToQueue("twitch", event.getUser().getName());
+                    } else {
+                        event.reply(event.getTwitchChat(),
+                                "@" + event.getUser().getName() + " is already in the queue.");
+                    }
+                } else if (event.getMessage().equalsIgnoreCase("!q pos")) {
+                    int pos = getQueuePosition("twitch", event.getUser().getName());
+                    if (pos != -1) {
+                        event.reply(event.getTwitchChat(), "@" + event.getUser().getName() + " is position " + pos);
+                    } else {
+                        event.reply(event.getTwitchChat(), "@" + event.getUser().getName() + " is not in the queue.");
+                    }
+                }
+            });
+
+            twitchClient.getChat().getEventManager().onEvent(PrivateMessageEvent.class, event -> {
+                if (isWaitingOnTwitch() && event.getUser().getName().equalsIgnoreCase(currentUser)) {
+                    String msg = event.getMessage().replace("-", "").trim();
+                    if (isValidLinkCode(msg)) {
+                        waitingOnTwitch = false;
+                        setLinkCode(msg);
+                        twitchClient.getChat()
+                                .sendMessage("EzPzStreamz", "@" + currentUser + " link code received.");
+                    } else {
+                        twitchClient.getChat()
+                                .sendMessage("EzPzStreamz",
+                                        "@" + currentUser + " invalid link code. Please send another.");
+                    }
+
+
+                }
+            });
         }
         sbc.sendCommand("configure keySleepTime 35");
     }
@@ -146,6 +175,17 @@ public class SysBotJava implements Runnable {
         return false;
     }
 
+    private boolean isValidLinkCode(String code) {
+        try {
+            int temp = Integer.parseInt(code);
+            if (temp < 0 || temp > 100000000)
+                return false;
+        } catch (Exception e) {
+            return false;
+        }
+        return true;
+    }
+
     public synchronized int getQueuePosition(String mode, String userID) {
         List<Map.Entry<String, String>> tempList = userList.stream().toList();
         for (int i = 0; i < tempList.size(); i++) {
@@ -159,8 +199,8 @@ public class SysBotJava implements Runnable {
         return TimeUnit.SECONDS.convert(System.nanoTime(), TimeUnit.NANOSECONDS) - startTime > 120;
     }
 
-    private String generateLinkCode() {
-        return String.format("%08d", ThreadLocalRandom.current().nextInt(1, 99999999 + 1));
+    private synchronized void generateLinkCode() {
+        linkCode = String.format("%08d", ThreadLocalRandom.current().nextInt(1, 99999999 + 1));
     }
 
     private void hideHider() {
@@ -191,7 +231,7 @@ public class SysBotJava implements Runnable {
         }
     }
 
-    public void startTradeRoute(String linkCode) {
+    public void startTradeRoute() {
         try {
             //Join union room
             sbc.click("Y", 1500);
@@ -219,7 +259,7 @@ public class SysBotJava implements Runnable {
             hideHider();
             sbc.click("A", 5000);
             sbc.moveForward(500);
-            Thread.sleep(5000);
+            Thread.sleep(5500);
 
             //Start and wait for trade
             sbc.click("Y", 1200);
@@ -390,22 +430,36 @@ public class SysBotJava implements Runnable {
     }
 
     public void runDisc(Map.Entry<String, String> entry) {
-        String linkCode = generateLinkCode();
+        generateLinkCode();
         User user = jda.retrieveUserById(Long.parseUnsignedLong(entry.getValue())).complete();
         if (user != null) {
             user.openPrivateChannel()
                     .queue(s -> s.sendMessage("Waiting in the global room with link code: " + linkCode)
                             .queue());
-            startTradeRoute(linkCode);
+            startTradeRoute();
 
         }
     }
 
-    public void runTwitch(Map.Entry<String, String> entry) {
-        String linkCode = generateLinkCode();
-        twitchClient.getChat()
-                .sendPrivateMessage(entry.getValue(), "Waiting in the global room with link code: " + linkCode);
-        startTradeRoute(linkCode);
+    private synchronized void setLinkCode(String linkCode) {
+        this.linkCode = String.format("%08d", Integer.parseInt(linkCode));
+    }
+
+    private synchronized boolean isWaitingOnTwitch() {
+        return waitingOnTwitch;
+    }
+
+    public void runTwitch() throws InterruptedException {
+        waitingOnTwitch = true;
+        startTime = TimeUnit.SECONDS.convert(System.nanoTime(), TimeUnit.NANOSECONDS);
+        twitchClient.getChat().sendMessage("EzPzStreamz",
+                "@" + currentUser + " It's your turn! Whisper me a link code to get started.");
+        while (isWaitingOnTwitch()) {
+            if (hasTimedOut()) return;
+            Thread.sleep(500);
+        }
+
+        startTradeRoute();
     }
 
     @Override
@@ -413,10 +467,15 @@ public class SysBotJava implements Runnable {
         while (!shutdown) {
             if (userList.peek() != null) {
                 Map.Entry<String, String> entry = userList.poll();
+                currentUser = entry.getValue();
                 if (entry.getKey().equalsIgnoreCase("Discord")) {
                     runDisc(entry);
                 } else if (entry.getKey().equalsIgnoreCase("Twitch")) {
-                    runTwitch(entry);
+                    try {
+                        runTwitch();
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
                 }
             }
         }
