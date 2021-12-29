@@ -1,4 +1,6 @@
 b1s1:[[[[[[[[[main+4e853f0]+18]+c0]+28]+b8]+0]+a0]+20]+20]+20
+isGaming:[[main+4e4ed98]+b8]+3c
+isRunningSession:[[[[[main+4e5c730]+18]+b8]+0]+28]+60
 onlineState:[[[[[[[main+4e5c790]+18]+b8]+0]+b0]+a8]+18]+18
 tradeFlowState:[[[[[main+4e5c790]+18]+b8]+0]+108]+80
 isReceived:[[[[[[main+4e5c790]+18]+b8]+0]+108]+28]+78

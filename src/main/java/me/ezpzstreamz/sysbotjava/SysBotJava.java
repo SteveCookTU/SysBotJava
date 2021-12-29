@@ -94,7 +94,7 @@ public class SysBotJava implements Runnable {
         File[] pokemon = pokemonFolder.listFiles(filter);
         assert pokemon != null;
         for (File f : pokemon) {
-            pkmFiles.put(f.getName().substring(0, f.getName().length() - 4),
+            pkmFiles.put(f.getName().substring(0, f.getName().length() - 4).toLowerCase(),
                     Files.readAllBytes(Paths.get(f.getPath())));
         }
         sbc = new SysBotController("10.0.0.53", 6000);
@@ -118,7 +118,7 @@ public class SysBotJava implements Runnable {
                         } else {
                             event.reply(event.getTwitchChat(),
                                     "You have joined the queue. There are " + getQueueSize() +
-                                            " users in front of you. You will receive a link code when it is your turn.");
+                                            " users in front of you. I will request a link code when it is your turn.");
                         }
 
                         addToQueue("twitch", event.getUser().getName());
@@ -138,7 +138,7 @@ public class SysBotJava implements Runnable {
 
             twitchClient.getChat().getEventManager().onEvent(PrivateMessageEvent.class, event -> {
                 if (isWaitingOnTwitch() && event.getUser().getName().equalsIgnoreCase(currentUser)) {
-                    String msg = event.getMessage().replace("-", "").trim();
+                    String msg = event.getMessage().replace("-", "").replace(" ", "").trim();
                     if (isValidLinkCode(msg)) {
                         waitingOnTwitch = false;
                         setLinkCode(msg);
@@ -154,7 +154,7 @@ public class SysBotJava implements Runnable {
                 }
             });
         }
-        sbc.sendCommand("configure keySleepTime 35");
+        sbc.sendCommand("configure keySleepTime 60");
     }
 
     public synchronized void addToQueue(String mode, String userID) {
@@ -217,55 +217,102 @@ public class SysBotJava implements Runnable {
         }
     }
 
-    public void waitNextTradePhase(int nextPhase) throws IOException, InterruptedException {
-        while (Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1), 16) < nextPhase) {
-            if (hasTimedOut()) {
+    public boolean waitNextTradePhase(int nextPhase, int currentPhase) throws IOException, InterruptedException {
+        int state = Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1), 16);
+        while (state < nextPhase) {
+            if (checkIfCancelled(Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1), 16), currentPhase)) return false;
+            if (hasTimedOut() || checkIfCancelled(state, currentPhase)) {
                 System.out.println("Trade timed out.");
                 sbc.click("B", 1500);
                 leaveTrade();
                 Thread.sleep(500);
                 leaveUnionRoom();
-                return;
+                return false;
             }
             Thread.sleep(500);
+            state = Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1), 16);
         }
+        return true;
+    }
+
+    public void joinUnionRoom() throws InterruptedException, IOException {
+        //Join union room
+        sbc.click("Y", 1500);
+        sbc.click("DRIGHT", 1500);
+        sbc.click("A", 1500);
+        sbc.click("A", 1500);
+        sbc.click("A", 1500);
+        sbc.click("DDOWN", 1000);
+        sbc.click("DDOWN", 1000);
+        sbc.click("A", 1500);
+        sbc.click("A", 1500);
+
+        //waitForConnection
+        Thread.sleep(4000);
+
+        sbc.click("A", 1500);
+        sbc.click("A", 1500);
+        showHider();
+        sbc.click("A", 9000);
+        //System.out.println("Link Code: " + linkCode);
+        sbc.enterCode(linkCode);
+        Thread.sleep(3000);
+
+        sbc.click("PLUS", 1500);
+        sbc.click("A", 3000);
+        while(Integer.parseInt(sbc.peek(pointers.get("isRunningSession"), 1), 16) != 1) {
+            redoLinkCode();
+        }
+        hideHider();
+        sbc.moveForward(1000);
+        while(Integer.parseInt(sbc.peek(pointers.get("isGaming"), 1), 16) != 1) {
+            Thread.sleep(1000);
+        }
+    }
+
+    private void redoLinkCode() throws InterruptedException {
+        deleteLinkCodeEntryHalf();
+        deleteLinkCodeEntryHalf();
+
+        sbc.enterCode(linkCode);
+        Thread.sleep(3000);
+
+        sbc.click("PLUS", 1500);
+        sbc.click("A", 3000);
+    }
+
+    private void deleteLinkCodeEntryHalf() throws InterruptedException {
+        sbc.sendCommand("key 42");
+        Thread.sleep(1000);
+        sbc.sendCommand("key 42");
+        Thread.sleep(1000);
+        sbc.sendCommand("key 42");
+        Thread.sleep(1000);
+        sbc.sendCommand("key 42");
+        Thread.sleep(1000);
+    }
+
+    private void startTradeRecruitment() throws InterruptedException {
+        //Start and wait for trade
+        sbc.click("Y", 1200);
+        sbc.click("A", 1200);
+        sbc.click("DDOWN", 1200);
+        sbc.click("A", 1200);
     }
 
     public void startTradeRoute() {
         try {
-            //Join union room
-            sbc.click("Y", 1500);
-            sbc.click("DRIGHT", 1500);
-            sbc.click("A", 1500);
-            sbc.click("A", 1500);
-            sbc.click("A", 1500);
-            sbc.click("DDOWN", 1000);
-            sbc.click("DDOWN", 1000);
-            sbc.click("A", 1500);
-            sbc.click("A", 1500);
+            joinUnionRoom();
 
-            //waitForConnection
-            Thread.sleep(4000);
+            startTradeRecruitment();
 
-            sbc.click("A", 1500);
-            sbc.click("A", 1500);
-            showHider();
-            sbc.click("A", 9000);
-            //System.out.println("Link Code: " + linkCode);
-            sbc.enterCode(linkCode);
-            Thread.sleep(3000);
-
-            sbc.click("PLUS", 1500);
-            hideHider();
-            sbc.click("A", 5000);
-            sbc.moveForward(500);
-            Thread.sleep(5500);
-
-            //Start and wait for trade
-            sbc.click("Y", 1200);
-            sbc.click("A", 1200);
-            sbc.click("DDOWN", 1200);
-            sbc.click("A", 1200);
+            int state = Integer.parseInt(sbc.peek(pointers.get("onlineState"), 1), 16);
+            while(state != 4 && state != 8) {
+                sbc.click("B", 1200);
+                sbc.click("B", 1200);
+                startTradeRecruitment();
+                state = Integer.parseInt(sbc.peek(pointers.get("onlineState"), 1), 16);
+            }
 
             if (pkmFiles.containsKey("default")) {
                 sbc.poke(pointers.get("b1s1"), "0x" + Util.bytesToHex(Util.encryptPb8(pkmFiles.get("default"))));
@@ -304,23 +351,22 @@ public class SysBotJava implements Runnable {
             sbc.click("A", 1000);
             sbc.click("A", 1000);
 
-            while (Integer.parseInt(sbc.peek(pointers.get("onlineState"), 1), 16) != 18) {
-                Thread.sleep(500);
-            }
+            Thread.sleep(1000);
 
             if (Integer.parseInt(sbc.peek(pointers.get("onlineState"), 1), 16) == 18) {
                 Thread.sleep(1000);
+
+                sbc.click("A", 1300);
+                sbc.click("A", 1300);
+
                 int currentPhase = 3;
                 int nextPhase = 4;
 
-                sbc.click("A", 1300);
-                sbc.click("A", 1300);
-
-                waitNextTradePhase(nextPhase);
+                if(!waitNextTradePhase(nextPhase, currentPhase)) return;
 
                 startTime += 15;
 
-                if (checkIfCancelled(currentPhase)) return;
+                if (checkIfCancelled(Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1), 16), currentPhase)) return;
                 currentPhase = nextPhase;
                 nextPhase = 6;
                 Thread.sleep(500);
@@ -331,23 +377,26 @@ public class SysBotJava implements Runnable {
                         new String(nickname, StandardCharsets.ISO_8859_1).trim().replaceAll("\0", "").toLowerCase(
                                 Locale.ROOT);
                 if (pkmFiles.containsKey(nicknameStr)) {
-                    sbc.click("B", 1600);
+                    sbc.click("B", 1000);
                     sbc.poke(pointers.get("b1s1"), "0x" + Util.bytesToHex(Util.encryptPb8(pkmFiles.get(nicknameStr))));
-                    sbc.click("A", 1300);
-                    sbc.click("A", 1300);
+                    state = Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1), 16);
+                    while(state != 3 && state != 4) {
+                        sbc.click("A", 1300);
+                        state = Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1), 16);
+                    }
 
                     currentPhase = 3;
                     nextPhase = 4;
 
-                    waitNextTradePhase(nextPhase);
+                    if(!waitNextTradePhase(nextPhase, currentPhase)) return;
 
-                    if (checkIfCancelled(currentPhase)) return;
+                    if (checkIfCancelled(Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1), 16), currentPhase)) return;
 
                     currentPhase = nextPhase;
                     nextPhase = 6;
-
+                    pb8Str = sbc.peek(pointers.get("tradePB8"), 0x158);
                 }
-                pb8Str = sbc.peek(pointers.get("tradePB8"), 0x158);
+
                 pb8 = Util.decryptEb8(HexFormat.of().parseHex(pb8Str));
                 ByteBuffer bb = ByteBuffer.wrap(pb8, 8, 10);
                 bb.order(ByteOrder.LITTLE_ENDIAN);
@@ -358,6 +407,7 @@ public class SysBotJava implements Runnable {
                 boolean isEgg = (bb.getInt() >> 30 & 0x1) == 1;
 
                 if (isEgg || tradeSpecies.contains(species)) {
+                    if (checkIfCancelled(Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1), 16), currentPhase)) return;
                     System.out.println("Egg or trade species offered.");
                     sbc.click("B", 1500);
                     leaveTrade();
@@ -366,11 +416,11 @@ public class SysBotJava implements Runnable {
                     leaveUnionRoom();
                     return;
                 }
-
+                if (checkIfCancelled(Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1), 16), currentPhase)) return;
                 sbc.click("A", 1300);
 
-                waitNextTradePhase(nextPhase);
-                if (checkIfCancelled(currentPhase)) return;
+                if(!waitNextTradePhase(nextPhase, currentPhase)) return;
+                if (checkIfCancelled(Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1), 16), currentPhase)) return;
                 currentPhase = nextPhase;
                 nextPhase = 9;
 
@@ -378,7 +428,7 @@ public class SysBotJava implements Runnable {
                     sbc.click("B", 1500);
                 }
 
-                if (checkIfCancelled(currentPhase)) return;
+                if (checkIfCancelled(Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1), 16), currentPhase)) return;
 
                 while (Integer.parseInt(sbc.peek(pointers.get("tradeFlowState"), 1), 16) == 3) {
                     Thread.sleep(500);
@@ -388,14 +438,16 @@ public class SysBotJava implements Runnable {
                 Thread.sleep(500);
                 leaveUnionRoom();
 
+            } else {
+                leaveUnionRoom();
             }
         } catch (InterruptedException | IOException e) {
             e.printStackTrace();
         }
     }
 
-    private boolean checkIfCancelled(int currentPhase) throws InterruptedException, IOException {
-        if (Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1), 16) < currentPhase) {
+    private boolean checkIfCancelled(int state, int currentPhase) throws InterruptedException, IOException {
+        if (state < currentPhase) {
             System.out.println("Trade cancelled.");
             Thread.sleep(1000);
             sbc.click("B", 1500);
@@ -404,9 +456,18 @@ public class SysBotJava implements Runnable {
             leaveUnionRoom();
             return true;
         }
-        if (Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1), 16) == 0xA) {
+        if (state == 0xA) {
             System.out.println("Trade cancelled.");
             Thread.sleep(1000);
+            sbc.click("B", 1500);
+            Thread.sleep(500);
+            leaveUnionRoom();
+            return true;
+        }
+        if (state == 0xB) {
+            System.out.println("Trade cancelled.");
+            Thread.sleep(1000);
+            sbc.click("B", 1500);
             sbc.click("B", 1500);
             Thread.sleep(500);
             leaveUnionRoom();
