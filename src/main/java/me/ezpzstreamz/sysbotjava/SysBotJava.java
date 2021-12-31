@@ -29,8 +29,9 @@ public class SysBotJava implements Runnable {
     private final JDA jda;
     private final TwitchClient twitchClient;
 
-    private final ArrayDeque<Map.Entry<String, String>> userList;
+    private final ArrayDeque<TradeEntry<String, String>> userList;
     private final SysBotController sbc;
+    private final PKMGeneratorClient pkmGeneratorClient;
     private final Map<String, String> pointers;
 
     private final Map<String, byte[]> pkmFiles;
@@ -38,7 +39,7 @@ public class SysBotJava implements Runnable {
     private long startTime;
     private boolean waitingOnTwitch = false;
     private String linkCode = "";
-    private String currentUser = "";
+    private TradeEntry<String, String> currentUser;
 
     private static final List<Short> tradeSpecies = new ArrayList<>() {{
         add((short) 61);
@@ -61,7 +62,8 @@ public class SysBotJava implements Runnable {
 
     private volatile boolean shutdown = false;
 
-    public SysBotJava(String mode, String token) throws IOException {
+    public SysBotJava(String mode, String token) throws IOException, ExecutionException, InterruptedException {
+        PKMGeneratorClient pkmGeneratorClient1;
         JDA jdaTemp = null;
         TwitchClient tcTemp = null;
         pointers = new HashMap<>();
@@ -99,6 +101,12 @@ public class SysBotJava implements Runnable {
         }
         sbc = new SysBotController("10.0.0.53", 6000);
         sbc.connect();
+        pkmGeneratorClient1 = new PKMGeneratorClient("127.0.0.1", 7000);
+        pkmGeneratorClient1.connect();
+        if(!pkmGeneratorClient1.isConnected()) {
+            pkmGeneratorClient1 = null;
+        }
+        pkmGeneratorClient = pkmGeneratorClient1;
         userList = new ArrayDeque<>();
         jda = jdaTemp;
         twitchClient = tcTemp;
@@ -110,23 +118,59 @@ public class SysBotJava implements Runnable {
 
             twitchClient.getChat().joinChannel("EzPzStreamz");
             twitchClient.getChat().getEventManager().onEvent(ChannelMessageEvent.class, event -> {
-                if (event.getMessage().equalsIgnoreCase("!q join")) {
+                String[] command = event.getMessage().split(" ");
+                if ((command[0] + " " + command[1]).equalsIgnoreCase("!q join")) {
+                    String set = event.getMessage().substring(7).trim();
                     if (!queueContainsUser("twitch", event.getUser().getName())) {
-                        if (getQueueSize() == 0) {
-                            event.reply(event.getTwitchChat(),
-                                    "You have joined the queue. You are first in line!");
+                        byte[] data;
+                        if(!set.equalsIgnoreCase("")) {
+                            if(pkmGeneratorClient != null && pkmGeneratorClient.isConnected()) {
+                                try {
+                                    String resp = pkmGeneratorClient.sendShowdownString(set).get();
+                                    if(resp.equalsIgnoreCase("invalid") || resp.equalsIgnoreCase("invalidTrade")) {
+                                        event.reply(event.getTwitchChat(),
+                                                "The requested set is invalid! Please edit and try again.");
+                                    } else {
+                                        data = HexFormat.of().parseHex(resp);
+                                        if(data.length == 0x158) {
+                                            if (getQueueSize() == 0) {
+                                                event.reply(event.getTwitchChat(),
+                                                        "You have joined the queue. You are first in line!");
+                                            } else {
+                                                event.reply(event.getTwitchChat(),
+                                                        "You have joined the queue. There are " + getQueueSize() +
+                                                                " users in front of you. I will request a link code when it is your turn.");
+                                            }
+                                            addToQueue("twitch", event.getUser().getName(), data);
+                                        } else {
+                                            event.reply(event.getTwitchChat(),
+                                                    "The requested set is invalid! Please edit and try again.");
+                                        }
+                                    }
+                                } catch (InterruptedException | ExecutionException e) {
+                                    e.printStackTrace();
+                                }
+                            } else {
+                                event.reply(event.getTwitchChat(),
+                                        "Custom generation is currently disabled.");
+                            }
                         } else {
-                            event.reply(event.getTwitchChat(),
-                                    "You have joined the queue. There are " + getQueueSize() +
-                                            " users in front of you. I will request a link code when it is your turn.");
+                            if (getQueueSize() == 0) {
+                                event.reply(event.getTwitchChat(),
+                                        "You have joined the queue. You are first in line!");
+                            } else {
+                                event.reply(event.getTwitchChat(),
+                                        "You have joined the queue. There are " + getQueueSize() +
+                                                " users in front of you. I will request a link code when it is your turn.");
+                            }
+                            addToQueue("twitch", event.getUser().getName(), new byte[0]);
                         }
 
-                        addToQueue("twitch", event.getUser().getName());
                     } else {
                         event.reply(event.getTwitchChat(),
                                 "@" + event.getUser().getName() + " is already in the queue.");
                     }
-                } else if (event.getMessage().equalsIgnoreCase("!q pos")) {
+                } else if ((command[0] + " " + command[1]).equalsIgnoreCase("!q pos")) {
                     int pos = getQueuePosition("twitch", event.getUser().getName());
                     if (pos != -1) {
                         event.reply(event.getTwitchChat(), "@" + event.getUser().getName() + " is position " + pos);
@@ -137,37 +181,40 @@ public class SysBotJava implements Runnable {
             });
 
             twitchClient.getChat().getEventManager().onEvent(PrivateMessageEvent.class, event -> {
-                if (isWaitingOnTwitch() && event.getUser().getName().equalsIgnoreCase(currentUser)) {
+                if (isWaitingOnTwitch() && event.getUser().getName().equalsIgnoreCase(currentUser.getValue())) {
                     String msg = event.getMessage().replace("-", "").replace(" ", "").trim();
                     if (isValidLinkCode(msg)) {
                         waitingOnTwitch = false;
                         setLinkCode(msg);
                         twitchClient.getChat()
-                                .sendMessage("EzPzStreamz", "@" + currentUser + " link code received.");
+                                .sendMessage("EzPzStreamz", "@" + currentUser.getValue() + " link code received.");
                     } else {
                         twitchClient.getChat()
                                 .sendMessage("EzPzStreamz",
-                                        "@" + currentUser + " invalid link code. Please send another.");
+                                        "@" + currentUser.getValue() + " invalid link code. Please send another.");
                     }
 
 
                 }
             });
         }
-        sbc.sendCommand("configure keySleepTime 60");
+        sbc.updateFreezeRate().get();
+        sbc.freeze(pointers.get("instantText"), "0xFFFF7F7F").get();
+        sbc.freeze(pointers.get("fps"), "0x01").get();
+        sbc.sendCommand("configure keySleepTime 60").get();
     }
 
-    public synchronized void addToQueue(String mode, String userID) {
-        userList.add(new AbstractMap.SimpleEntry<>(mode, userID));
+    public void addToQueue(String mode, String userID, byte[] tradeType) {
+        userList.add(new TradeEntry<>(mode, userID, tradeType));
     }
 
-    public synchronized int getQueueSize() {
+    public int getQueueSize() {
         return userList.size();
     }
 
-    public synchronized boolean queueContainsUser(String mode, String userID) {
-        List<Map.Entry<String, String>> tempList = userList.stream().toList();
-        for (Map.Entry<String, String> stringStringEntry : tempList) {
+    public boolean queueContainsUser(String mode, String userID) {
+        List<TradeEntry<String, String>> tempList = userList.stream().toList();
+        for (TradeEntry<String, String> stringStringEntry : tempList) {
             if (stringStringEntry.getKey().equalsIgnoreCase(mode) &&
                     stringStringEntry.getValue().equalsIgnoreCase(userID))
                 return true;
@@ -178,7 +225,7 @@ public class SysBotJava implements Runnable {
     private boolean isValidLinkCode(String code) {
         try {
             int temp = Integer.parseInt(code);
-            if (temp < 0 || temp > 100000000)
+            if (temp < 0 || temp > 120000000)
                 return false;
         } catch (Exception e) {
             return false;
@@ -186,8 +233,8 @@ public class SysBotJava implements Runnable {
         return true;
     }
 
-    public synchronized int getQueuePosition(String mode, String userID) {
-        List<Map.Entry<String, String>> tempList = userList.stream().toList();
+    public int getQueuePosition(String mode, String userID) {
+        List<TradeEntry<String, String>> tempList = userList.stream().toList();
         for (int i = 0; i < tempList.size(); i++) {
             if (tempList.get(i).getKey().equalsIgnoreCase(mode) && tempList.get(i).getValue().equalsIgnoreCase(userID))
                 return i + 1;
@@ -195,11 +242,11 @@ public class SysBotJava implements Runnable {
         return -1;
     }
 
-    public synchronized boolean hasTimedOut() {
+    public boolean hasTimedOut() {
         return TimeUnit.SECONDS.convert(System.nanoTime(), TimeUnit.NANOSECONDS) - startTime > 120;
     }
 
-    private synchronized void generateLinkCode() {
+    private void generateLinkCode() {
         linkCode = String.format("%08d", ThreadLocalRandom.current().nextInt(1, 99999999 + 1));
     }
 
@@ -217,280 +264,332 @@ public class SysBotJava implements Runnable {
         }
     }
 
-    public boolean waitNextTradePhase(int nextPhase, int currentPhase) throws IOException, InterruptedException {
-        int state = Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1), 16);
+    public boolean isSameTradePhase(int nextPhase, int currentPhase)
+            throws IOException, InterruptedException, ExecutionException {
+        int state = Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1).get(), 16);
         while (state < nextPhase) {
-            if (checkIfCancelled(Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1), 16), currentPhase)) return false;
+            if (checkIfCancelled(Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1).get(), 16), currentPhase))
+                return true;
             if (hasTimedOut() || checkIfCancelled(state, currentPhase)) {
                 System.out.println("Trade timed out.");
-                sbc.click("B", 1500);
+                sbc.click("B", 1500).get();
                 leaveTrade();
-                Thread.sleep(500);
+                TimeUnit.MILLISECONDS.sleep(500);
                 leaveUnionRoom();
-                return false;
+                return true;
             }
-            Thread.sleep(500);
-            state = Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1), 16);
+            TimeUnit.MILLISECONDS.sleep(500);
+            state = Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1).get(), 16);
         }
-        return true;
+        return false;
     }
 
-    public void joinUnionRoom() throws InterruptedException, IOException {
+    public void joinUnionRoom() throws InterruptedException, IOException, ExecutionException {
         //Join union room
-        sbc.click("Y", 1500);
-        sbc.click("DRIGHT", 1500);
-        sbc.click("A", 1500);
-        sbc.click("A", 1500);
-        sbc.click("A", 1500);
-        sbc.click("DDOWN", 1000);
-        sbc.click("DDOWN", 1000);
-        sbc.click("A", 1500);
-        sbc.click("A", 1500);
+        sbc.click("Y", 1200).get();
+        sbc.click("DRIGHT", 1200).get();
+        sbc.click("A", 1200).get();
+        sbc.click("A", 1200).get();
+        sbc.click("A", 1200).get();
+        sbc.click("DDOWN", 500).get();
+        sbc.click("DDOWN", 500).get();
+        sbc.click("A", 1200).get();
+        sbc.click("A", 1200).get();
 
         //waitForConnection
-        Thread.sleep(4000);
+        TimeUnit.MILLISECONDS.sleep(4000);
 
-        sbc.click("A", 1500);
-        sbc.click("A", 1500);
+        sbc.click("A", 1200).get();
+        sbc.click("A", 1200).get();
         showHider();
-        sbc.click("A", 9000);
+        sbc.click("A", 9000).get();
         //System.out.println("Link Code: " + linkCode);
-        sbc.enterCode(linkCode);
-        Thread.sleep(3000);
+        sbc.enterCode(linkCode).get();
+        TimeUnit.MILLISECONDS.sleep(3000);
 
-        sbc.click("PLUS", 1500);
-        sbc.click("A", 3000);
-        while(Integer.parseInt(sbc.peek(pointers.get("isRunningSession"), 1), 16) != 1) {
+        sbc.click("PLUS", 1500).get();
+        sbc.click("A", 3000).get();
+        while (Integer.parseInt(sbc.peek(pointers.get("isRunningSession"), 1).get(), 16) != 1) {
             redoLinkCode();
         }
         hideHider();
-        sbc.moveForward(1000);
-        while(Integer.parseInt(sbc.peek(pointers.get("isGaming"), 1), 16) != 1) {
-            Thread.sleep(1000);
+        while (Integer.parseInt(sbc.peek(pointers.get("isGaming"), 1).get(), 16) != 1) {
+            TimeUnit.MILLISECONDS.sleep(500);
+        }
+        sbc.moveForward(1200).get();
+    }
+
+    private void redoLinkCode() throws InterruptedException, ExecutionException {
+        deleteLinkCodeEntryHalf();
+        deleteLinkCodeEntryHalf();
+
+        sbc.enterCode(linkCode).get();
+        TimeUnit.SECONDS.sleep(3);
+
+        sbc.click("PLUS", 1500).get();
+        sbc.click("A", 3000).get();
+    }
+
+    private void deleteLinkCodeEntryHalf() throws InterruptedException, ExecutionException {
+        sbc.sendCommand("key 42").get();
+        TimeUnit.MILLISECONDS.sleep(500);
+        sbc.sendCommand("key 42").get();
+        TimeUnit.MILLISECONDS.sleep(500);
+        sbc.sendCommand("key 42").get();
+        TimeUnit.MILLISECONDS.sleep(500);
+        sbc.sendCommand("key 42").get();
+        TimeUnit.MILLISECONDS.sleep(500);
+    }
+
+    private void startTradeRecruitment() throws ExecutionException, InterruptedException {
+
+        sbc.click("Y", 1200).get();
+        sbc.click("A", 1200).get();
+        sbc.click("DDOWN", 1200).get();
+        sbc.click("A", 1200).get();
+
+    }
+
+    public void injectCustom() throws ExecutionException, InterruptedException {
+        sbc.poke(pointers.get("b1s1"), "0x" + Util.bytesToHex(currentUser.getRequest())).get();
+    }
+
+    public void injectDefault() throws ExecutionException, InterruptedException {
+        if (pkmFiles.containsKey("default")) {
+            sbc.poke(pointers.get("b1s1"), "0x" + Util.bytesToHex(Util.encryptPb8(pkmFiles.get("default")))).get();
+        } else {
+            List<String> names = pkmFiles.keySet().stream().toList();
+            int randomName = ThreadLocalRandom.current().nextInt(0, names.size());
+            sbc.poke(pointers.get("b1s1"),
+                    "0x" + Util.bytesToHex(Util.encryptPb8(pkmFiles.get(names.get(randomName))))).get();
         }
     }
 
-    private void redoLinkCode() throws InterruptedException {
-        deleteLinkCodeEntryHalf();
-        deleteLinkCodeEntryHalf();
+    public boolean tradeDefault(int currentPhase)
+            throws ExecutionException, InterruptedException, IOException {
+        String pb8Str = sbc.peek(pointers.get("tradePB8"), 0x158).get();
+        byte[] pb8 = Util.decryptEb8(HexFormat.of().parseHex(pb8Str));
+        byte[] nickname = Arrays.copyOfRange(pb8, 88, 112);
+        String nicknameStr =
+                new String(nickname, StandardCharsets.ISO_8859_1).trim().replaceAll("\0", "").toLowerCase(
+                        Locale.ROOT);
+        if (pkmFiles.containsKey(nicknameStr)) {
+            sbc.click("B", 1200).get();
+            sbc.poke(pointers.get("b1s1"), "0x" + Util.bytesToHex(Util.encryptPb8(pkmFiles.get(nicknameStr)))).get();
+            int state = Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1).get(), 16);
+            while (state != 3 && state != 4) {
+                sbc.click("A", 1200).get();
+                state = Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1).get(), 16);
+            }
 
-        sbc.enterCode(linkCode);
-        Thread.sleep(3000);
+            currentPhase = 3;
+            int nextPhase = 4;
 
-        sbc.click("PLUS", 1500);
-        sbc.click("A", 3000);
+            if (isSameTradePhase(nextPhase, currentPhase)) return false;
+
+            if (checkIfCancelled(Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1).get(), 16),
+                    currentPhase)) return false;
+
+            currentPhase = nextPhase;
+
+            pb8Str = sbc.peek(pointers.get("tradePB8"), 0x158).get();
+        }
+
+        pb8 = Util.decryptEb8(HexFormat.of().parseHex(pb8Str));
+        return checkIsEggOrTradeEvo(currentPhase, pb8);
+
     }
 
-    private void deleteLinkCodeEntryHalf() throws InterruptedException {
-        sbc.sendCommand("key 42");
-        Thread.sleep(1000);
-        sbc.sendCommand("key 42");
-        Thread.sleep(1000);
-        sbc.sendCommand("key 42");
-        Thread.sleep(1000);
-        sbc.sendCommand("key 42");
-        Thread.sleep(1000);
+    public boolean tradeCustom(int currentPhase) throws ExecutionException, InterruptedException, IOException {
+        String pb8Str = sbc.peek(pointers.get("tradePB8"), 0x158).get();
+        byte[] pb8 = Util.decryptEb8(HexFormat.of().parseHex(pb8Str));
+        return checkIsEggOrTradeEvo(currentPhase, pb8);
     }
 
-    private void startTradeRecruitment() throws InterruptedException {
-        //Start and wait for trade
-        sbc.click("Y", 1200);
-        sbc.click("A", 1200);
-        sbc.click("DDOWN", 1200);
-        sbc.click("A", 1200);
+    private boolean checkIsEggOrTradeEvo(int currentPhase, byte[] pb8)
+            throws InterruptedException, IOException, ExecutionException {
+        ByteBuffer bb = ByteBuffer.wrap(pb8, 8, 10);
+        bb.order(ByteOrder.LITTLE_ENDIAN);
+        short species = bb.getShort();
+        System.out.println(species);
+        bb = ByteBuffer.wrap(pb8, 140, 144);
+        bb.order(ByteOrder.LITTLE_ENDIAN);
+        boolean isEgg = (bb.getInt() >> 30 & 0x1) == 1;
+
+        if (isEgg || tradeSpecies.contains(species)) {
+            if (checkIfCancelled(Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1).get(), 16),
+                    currentPhase)) return false;
+            System.out.println("Egg or trade species offered.");
+            sbc.click("B", 1500).get();
+            leaveTrade();
+            TimeUnit.MILLISECONDS.sleep(500);
+            //leave union room
+            leaveUnionRoom();
+            return false;
+        }
+        if (checkIfCancelled(Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1).get(), 16),
+                currentPhase))
+            return false;
+        sbc.click("A", 1300).get();
+        return true;
     }
 
     public void startTradeRoute() {
         try {
+            Thread.sleep(2000);
             joinUnionRoom();
 
             startTradeRecruitment();
 
-            int state = Integer.parseInt(sbc.peek(pointers.get("onlineState"), 1), 16);
-            while(state != 4 && state != 8) {
-                sbc.click("B", 1200);
-                sbc.click("B", 1200);
+            int state = Integer.parseInt(sbc.peek(pointers.get("onlineState"), 1).get(), 16);
+            while (state != 4 && state != 8) {
+                sbc.click("B", 1200).get();
+                sbc.click("B", 1200).get();
                 startTradeRecruitment();
-                state = Integer.parseInt(sbc.peek(pointers.get("onlineState"), 1), 16);
+                state = Integer.parseInt(sbc.peek(pointers.get("onlineState"), 1).get(), 16);
             }
 
-            if (pkmFiles.containsKey("default")) {
-                sbc.poke(pointers.get("b1s1"), "0x" + Util.bytesToHex(Util.encryptPb8(pkmFiles.get("default"))));
+            if(currentUser.getRequest().length == 0) {
+                injectDefault();
             } else {
-                List<String> names = pkmFiles.keySet().stream().toList();
-                int randomName = ThreadLocalRandom.current().nextInt(0, names.size());
-                sbc.poke(pointers.get("b1s1"),
-                        "0x" + Util.bytesToHex(Util.encryptPb8(pkmFiles.get(names.get(randomName)))));
+                System.out.println(Util.bytesToHex(currentUser.getRequest()));
+                injectCustom();
             }
 
-
-            Thread.sleep(600);
+            TimeUnit.MILLISECONDS.sleep(600);
             startTime = TimeUnit.SECONDS.convert(System.nanoTime(), TimeUnit.NANOSECONDS);
-            while (Integer.parseInt(sbc.peek(pointers.get("onlineState"), 1), 16) != 8) {
+            while (Integer.parseInt(sbc.peek(pointers.get("onlineState"), 1).get(), 16) != 8) {
                 if (hasTimedOut()) {
                     System.out.println("Trade timed out.");
-                    sbc.click("B", 1000);
-                    sbc.click("B", 1000);
-                    sbc.click("B", 1000);
+                    sbc.click("B", 1200).get();
+                    sbc.click("B", 1200).get();
+                    sbc.click("B", 1200).get();
 
                     //leave union room
-                    sbc.click("B", 1000);
-                    sbc.click("Y", 1000);
-                    sbc.click("DDOWN", 1000);
-                    sbc.click("A", 5000);
+                    sbc.click("B", 1200).get();
+                    sbc.click("Y", 1200).get();
+                    sbc.click("DDOWN", 1200).get();
+                    sbc.click("A", 5000).get();
 
                     return;
                 }
 
-                Thread.sleep(1000);
+                TimeUnit.MILLISECONDS.sleep(1000);
             }
 
+            TimeUnit.MILLISECONDS.sleep(1000);
+
             startTime += 15;
+            sbc.click("A", 1200).get();
+            sbc.click("A", 1200).get();
+            sbc.click("A", 1200).get();
 
-            sbc.click("A", 1000);
-            sbc.click("A", 1000);
-            sbc.click("A", 1000);
+            TimeUnit.MILLISECONDS.sleep(1200);
 
-            Thread.sleep(1000);
+            if (Integer.parseInt(sbc.peek(pointers.get("onlineState"), 1).get(), 16) == 18) {
+                TimeUnit.MILLISECONDS.sleep(1200);
 
-            if (Integer.parseInt(sbc.peek(pointers.get("onlineState"), 1), 16) == 18) {
-                Thread.sleep(1000);
-
-                sbc.click("A", 1300);
-                sbc.click("A", 1300);
+                sbc.click("A", 1300).get();
+                sbc.click("A", 1300).get();
 
                 int currentPhase = 3;
                 int nextPhase = 4;
 
-                if(!waitNextTradePhase(nextPhase, currentPhase)) return;
+                if (isSameTradePhase(nextPhase, currentPhase)) return;
 
                 startTime += 15;
 
-                if (checkIfCancelled(Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1), 16), currentPhase)) return;
+                if (checkIfCancelled(Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1).get(), 16),
+                        currentPhase))
+                    return;
                 currentPhase = nextPhase;
                 nextPhase = 6;
-                Thread.sleep(500);
-                String pb8Str = sbc.peek(pointers.get("tradePB8"), 0x158);
-                byte[] pb8 = Util.decryptEb8(HexFormat.of().parseHex(pb8Str));
-                byte[] nickname = Arrays.copyOfRange(pb8, 88, 112);
-                String nicknameStr =
-                        new String(nickname, StandardCharsets.ISO_8859_1).trim().replaceAll("\0", "").toLowerCase(
-                                Locale.ROOT);
-                if (pkmFiles.containsKey(nicknameStr)) {
-                    sbc.click("B", 1000);
-                    sbc.poke(pointers.get("b1s1"), "0x" + Util.bytesToHex(Util.encryptPb8(pkmFiles.get(nicknameStr))));
-                    state = Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1), 16);
-                    while(state != 3 && state != 4) {
-                        sbc.click("A", 1300);
-                        state = Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1), 16);
-                    }
+                TimeUnit.MILLISECONDS.sleep(500);
 
-                    currentPhase = 3;
-                    nextPhase = 4;
-
-                    if(!waitNextTradePhase(nextPhase, currentPhase)) return;
-
-                    if (checkIfCancelled(Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1), 16), currentPhase)) return;
-
-                    currentPhase = nextPhase;
-                    nextPhase = 6;
-                    pb8Str = sbc.peek(pointers.get("tradePB8"), 0x158);
+                if(currentUser.getRequest().length == 0) {
+                    if(!tradeDefault(currentPhase)) return;
+                } else {
+                    if(!tradeCustom(currentPhase)) return;
                 }
 
-                pb8 = Util.decryptEb8(HexFormat.of().parseHex(pb8Str));
-                ByteBuffer bb = ByteBuffer.wrap(pb8, 8, 10);
-                bb.order(ByteOrder.LITTLE_ENDIAN);
-                short species = bb.getShort();
-                System.out.println(species);
-                bb = ByteBuffer.wrap(pb8, 140, 144);
-                bb.order(ByteOrder.LITTLE_ENDIAN);
-                boolean isEgg = (bb.getInt() >> 30 & 0x1) == 1;
-
-                if (isEgg || tradeSpecies.contains(species)) {
-                    if (checkIfCancelled(Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1), 16), currentPhase)) return;
-                    System.out.println("Egg or trade species offered.");
-                    sbc.click("B", 1500);
-                    leaveTrade();
-                    Thread.sleep(500);
-                    //leave union room
-                    leaveUnionRoom();
+                if (isSameTradePhase(nextPhase, currentPhase)) return;
+                if (checkIfCancelled(Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1).get(), 16),
+                        currentPhase))
                     return;
-                }
-                if (checkIfCancelled(Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1), 16), currentPhase)) return;
-                sbc.click("A", 1300);
-
-                if(!waitNextTradePhase(nextPhase, currentPhase)) return;
-                if (checkIfCancelled(Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1), 16), currentPhase)) return;
                 currentPhase = nextPhase;
                 nextPhase = 9;
 
-                while (Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1), 16) < nextPhase) {
-                    sbc.click("B", 1500);
+                while (Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1).get(), 16) < nextPhase) {
+                    sbc.click("B", 1500).get();
                 }
 
-                if (checkIfCancelled(Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1), 16), currentPhase)) return;
+                if (checkIfCancelled(Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1).get(), 16),
+                        currentPhase))
+                    return;
 
-                while (Integer.parseInt(sbc.peek(pointers.get("tradeFlowState"), 1), 16) == 3) {
-                    Thread.sleep(500);
+                while (Integer.parseInt(sbc.peek(pointers.get("tradeFlowState"), 1).get(), 16) == 3) {
+                    TimeUnit.MILLISECONDS.sleep(500);
                 }
-                Thread.sleep(2000);
+                TimeUnit.MILLISECONDS.sleep(2000);
                 leaveTrade();
-                Thread.sleep(500);
+                TimeUnit.MILLISECONDS.sleep(500);
                 leaveUnionRoom();
 
             } else {
                 leaveUnionRoom();
             }
-        } catch (InterruptedException | IOException e) {
+        } catch (InterruptedException | IOException | ExecutionException e) {
             e.printStackTrace();
         }
     }
 
-    private boolean checkIfCancelled(int state, int currentPhase) throws InterruptedException, IOException {
+    private boolean checkIfCancelled(int state, int currentPhase)
+            throws InterruptedException, IOException, ExecutionException {
         if (state < currentPhase) {
             System.out.println("Trade cancelled.");
-            Thread.sleep(1000);
-            sbc.click("B", 1500);
+            TimeUnit.MILLISECONDS.sleep(1200);
+            sbc.click("B", 1500).get();
             leaveTrade();
-            Thread.sleep(500);
+            TimeUnit.MILLISECONDS.sleep(500);
             leaveUnionRoom();
             return true;
         }
         if (state == 0xA) {
             System.out.println("Trade cancelled.");
-            Thread.sleep(1000);
-            sbc.click("B", 1500);
-            Thread.sleep(500);
+            TimeUnit.MILLISECONDS.sleep(1200);
+            sbc.click("B", 1500).get();
+            TimeUnit.MILLISECONDS.sleep(500);
             leaveUnionRoom();
             return true;
         }
         if (state == 0xB) {
             System.out.println("Trade cancelled.");
-            Thread.sleep(1000);
-            sbc.click("B", 1500);
-            sbc.click("B", 1500);
-            Thread.sleep(500);
+            TimeUnit.MILLISECONDS.sleep(1200);
+            sbc.click("B", 1500).get();
+            sbc.click("B", 1500).get();
+            TimeUnit.MILLISECONDS.sleep(500);
             leaveUnionRoom();
             return true;
         }
         return false;
     }
 
-    public void leaveTrade() throws InterruptedException {
-        sbc.click("B", 1200);
-        sbc.click("DUP", 1200);
-        sbc.click("A", 1200);
-        sbc.click("A", 1200);
+    public void leaveTrade() throws InterruptedException, ExecutionException {
+        sbc.click("B", 1200).get();
+        sbc.click("DUP", 1200).get();
+        sbc.click("A", 1200).get();
+        sbc.click("A", 1200).get();
     }
 
-    public void leaveUnionRoom() throws InterruptedException {
-        sbc.click("B", 1200);
-        sbc.click("Y", 1200);
-        sbc.click("DDOWN", 1200);
-        sbc.click("A", 6000);
+    public void leaveUnionRoom() throws InterruptedException, ExecutionException {
+        sbc.click("B", 1200).get();
+        sbc.click("Y", 1200).get();
+        sbc.click("DDOWN", 1200).get();
+        sbc.click("A", 1200).get();
+        Thread.sleep(3000);
     }
 
-    public void runDisc(Map.Entry<String, String> entry) {
+    public void runDisc(TradeEntry<String, String> entry) {
         generateLinkCode();
         User user = jda.retrieveUserById(Long.parseUnsignedLong(entry.getValue())).complete();
         if (user != null) {
@@ -498,15 +597,14 @@ public class SysBotJava implements Runnable {
                     .queue(s -> s.sendMessage("Waiting in the global room with link code: " + linkCode)
                             .queue());
             startTradeRoute();
-
         }
     }
 
-    private synchronized void setLinkCode(String linkCode) {
+    private void setLinkCode(String linkCode) {
         this.linkCode = String.format("%08d", Integer.parseInt(linkCode));
     }
 
-    private synchronized boolean isWaitingOnTwitch() {
+    private boolean isWaitingOnTwitch() {
         return waitingOnTwitch;
     }
 
@@ -514,12 +612,11 @@ public class SysBotJava implements Runnable {
         waitingOnTwitch = true;
         startTime = TimeUnit.SECONDS.convert(System.nanoTime(), TimeUnit.NANOSECONDS);
         twitchClient.getChat().sendMessage("EzPzStreamz",
-                "@" + currentUser + " It's your turn! Whisper me a link code to get started.");
+                "@" + currentUser.getValue() + " It's your turn! Whisper me a link code to get started.");
         while (isWaitingOnTwitch()) {
             if (hasTimedOut()) return;
-            Thread.sleep(500);
+            TimeUnit.MILLISECONDS.sleep(500);
         }
-
         startTradeRoute();
     }
 
@@ -527,11 +624,10 @@ public class SysBotJava implements Runnable {
     public void run() {
         while (!shutdown) {
             if (userList.peek() != null) {
-                Map.Entry<String, String> entry = userList.poll();
-                currentUser = entry.getValue();
-                if (entry.getKey().equalsIgnoreCase("Discord")) {
-                    runDisc(entry);
-                } else if (entry.getKey().equalsIgnoreCase("Twitch")) {
+                currentUser = userList.poll();
+                if (currentUser.getKey().equalsIgnoreCase("Discord")) {
+                    runDisc(currentUser);
+                } else if (currentUser.getKey().equalsIgnoreCase("Twitch")) {
                     try {
                         runTwitch();
                     } catch (InterruptedException e) {

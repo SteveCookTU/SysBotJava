@@ -1,10 +1,11 @@
 package me.ezpzstreamz.sysbotjava;
 
 import java.io.*;
+import java.util.concurrent.ExecutionException;
 
 public class Main {
 
-    public static void main(String[] args) throws IOException {
+    public static void main(String[] args) throws IOException, ExecutionException, InterruptedException {
         if(args.length < 2) {
             System.out.println("Mode and token required in launch arguments.");
             return;
@@ -20,7 +21,6 @@ public class Main {
             }
         }));
         sjb.run();
-
 
     }
 }

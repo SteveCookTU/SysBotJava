@@ -28,7 +28,7 @@ public class SlashCommandListener implements EventListener {
                         e.getUser().openPrivateChannel().queue(c -> e.reply(
                                                 "You have joined the queue. There are " + sbj.getQueueSize() +
                                                         " users in front of you.").setEphemeral(true)
-                                        .queue(m -> sbj.addToQueue("discord", e.getUser().getId()),
+                                        .queue(m -> sbj.addToQueue("discord", e.getUser().getId(), new byte[0]),
                                                 err -> e.reply("Unable to open DMs. Please enable private messages.")
                                                         .setEphemeral(true).queue()),
                                 err -> e.reply("Unable to open DMs. Please enable private messages.").setEphemeral(true)
