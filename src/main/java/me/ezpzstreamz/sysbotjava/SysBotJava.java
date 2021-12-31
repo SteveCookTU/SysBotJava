@@ -7,6 +7,8 @@ import com.github.twitch4j.chat.events.channel.ChannelMessageEvent;
 import com.github.twitch4j.common.events.user.PrivateMessageEvent;
 import me.ezpzstreamz.sysbotcontroller.SysBotController;
 import me.ezpzstreamz.sysbotjava.listeners.SlashCommandListener;
+import me.ezpzstreamz.sysbotjava.struct.TradeEntry;
+import me.ezpzstreamz.sysbotjava.struct.TradeQueue;
 import me.ezpzstreamz.sysbotjava.util.Util;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
@@ -29,7 +31,7 @@ public class SysBotJava implements Runnable {
     private final JDA jda;
     private final TwitchClient twitchClient;
 
-    private final ArrayDeque<TradeEntry<String, String>> userList;
+    private final TradeQueue userList;
     private final SysBotController sbc;
     private final PKMGeneratorClient pkmGeneratorClient;
     private final Map<String, String> pointers;
@@ -107,7 +109,7 @@ public class SysBotJava implements Runnable {
             pkmGeneratorClient1 = null;
         }
         pkmGeneratorClient = pkmGeneratorClient1;
-        userList = new ArrayDeque<>();
+        userList = new TradeQueue();
         jda = jdaTemp;
         twitchClient = tcTemp;
         if (twitchClient != null) {
@@ -177,6 +179,54 @@ public class SysBotJava implements Runnable {
                     } else {
                         event.reply(event.getTwitchChat(), "@" + event.getUser().getName() + " is not in the queue.");
                     }
+                } else if ((command[0] + " " + command[1]).equalsIgnoreCase("!q update")) {
+                    if(!queueContainsUser("twitch", event.getUser().getName())) {
+                        event.reply(event.getTwitchChat(),
+                                "You are not in the queue.");
+                    } else {
+                        String set = event.getMessage().substring(9).trim();
+                        byte[] data;
+                        if(!set.equalsIgnoreCase("")) {
+                            if(pkmGeneratorClient != null && pkmGeneratorClient.isConnected()) {
+                                try {
+                                    String resp = pkmGeneratorClient.sendShowdownString(set).get();
+                                    if(resp.equalsIgnoreCase("invalid") || resp.equalsIgnoreCase("invalidTrade")) {
+                                        event.reply(event.getTwitchChat(),
+                                                "The requested set is invalid! Please edit and try again.");
+                                    } else {
+                                        data = HexFormat.of().parseHex(resp);
+                                        if(data.length == 0x158) {
+                                            if (getQueueSize() == 0) {
+                                                event.reply(event.getTwitchChat(),
+                                                        "Your request has been updated.");
+                                            }
+                                            updateQueueEntry("twitch", event.getUser().getName(), data);
+                                        } else {
+                                            event.reply(event.getTwitchChat(),
+                                                    "The requested set is invalid! Please edit and try again.");
+                                        }
+                                    }
+                                } catch (InterruptedException | ExecutionException e) {
+                                    e.printStackTrace();
+                                }
+                            } else {
+                                event.reply(event.getTwitchChat(),
+                                        "Custom generation is currently disabled.");
+                            }
+                        } else {
+                            event.reply(event.getTwitchChat(),
+                                    "Please supply a showdown set to update with.");
+                        }
+                    }
+                } else if((command[0] + " " + command[1]).equalsIgnoreCase("!q leave")) {
+                    if(!queueContainsUser("twitch", event.getUser().getName())) {
+                        event.reply(event.getTwitchChat(),
+                                "You are not in the queue.");
+                    } else {
+                        event.reply(event.getTwitchChat(),
+                                "You have been removed from the queue.");
+                        removeFromQueue("twitch", event.getUser().getName());
+                    }
                 }
             });
 
@@ -204,22 +254,24 @@ public class SysBotJava implements Runnable {
         sbc.sendCommand("configure keySleepTime 60").get();
     }
 
-    public void addToQueue(String mode, String userID, byte[] tradeType) {
-        userList.add(new TradeEntry<>(mode, userID, tradeType));
+    public void addToQueue(String mode, String userID, byte[] request) {
+        userList.addToQueue(mode, userID, request);
     }
 
     public int getQueueSize() {
-        return userList.size();
+        return userList.getSize();
     }
 
     public boolean queueContainsUser(String mode, String userID) {
-        List<TradeEntry<String, String>> tempList = userList.stream().toList();
-        for (TradeEntry<String, String> stringStringEntry : tempList) {
-            if (stringStringEntry.getKey().equalsIgnoreCase(mode) &&
-                    stringStringEntry.getValue().equalsIgnoreCase(userID))
-                return true;
-        }
-        return false;
+        return userList.isInQueue(mode, userID);
+    }
+
+    public void updateQueueEntry(String mode, String userID, byte[] request) {
+        userList.updateQueueEntry(mode, userID, request);
+    }
+
+    public void removeFromQueue(String mode, String userID) {
+        userList.removeFromQueue(mode, userID);
     }
 
     private boolean isValidLinkCode(String code) {
@@ -234,12 +286,7 @@ public class SysBotJava implements Runnable {
     }
 
     public int getQueuePosition(String mode, String userID) {
-        List<TradeEntry<String, String>> tempList = userList.stream().toList();
-        for (int i = 0; i < tempList.size(); i++) {
-            if (tempList.get(i).getKey().equalsIgnoreCase(mode) && tempList.get(i).getValue().equalsIgnoreCase(userID))
-                return i + 1;
-        }
-        return -1;
+        return userList.getQueuePosition(mode, userID);
     }
 
     public boolean hasTimedOut() {

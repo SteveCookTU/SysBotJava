@@ -1,4 +1,4 @@
-package me.ezpzstreamz.sysbotjava;
+package me.ezpzstreamz.sysbotjava.struct;
 
 import java.util.Map;
 
