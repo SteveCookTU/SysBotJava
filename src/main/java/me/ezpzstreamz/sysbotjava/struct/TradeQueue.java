@@ -16,11 +16,14 @@ public class TradeQueue {
     }
 
     public void removeFromQueue(String mode, String userID) {
-        for(int i = 0; i < queueList.size(); i++) {
-            if(queueList.get(i).getKey().equalsIgnoreCase(mode) && queueList.get(i).getValue().equalsIgnoreCase(userID)) {
-                queueList.remove(i);
-                break;
+        synchronized (queueList) {
+            for(int i = 0; i < queueList.size(); i++) {
+                if(queueList.get(i).getKey().equalsIgnoreCase(mode) && queueList.get(i).getValue().equalsIgnoreCase(userID)) {
+                    queueList.remove(i);
+                    break;
+                }
             }
+            queueList.notify();
         }
     }
 
@@ -45,11 +48,11 @@ public class TradeQueue {
     }
 
     public TradeEntry<String, String> peek() {
-        return queueList.get(0);
+        return queueList.size() > 0 ?  queueList.get(0) : null;
     }
 
     public TradeEntry<String, String> poll() {
-        return queueList.remove(0);
+        return queueList.size() > 0 ? queueList.remove(0) : null;
     }
 
     public int getQueuePosition(String mode, String userID) {

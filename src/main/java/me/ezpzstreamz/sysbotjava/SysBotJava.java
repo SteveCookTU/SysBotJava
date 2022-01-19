@@ -105,7 +105,7 @@ public class SysBotJava implements Runnable {
         sbc.connect();
         pkmGeneratorClient1 = new PKMGeneratorClient("127.0.0.1", 7000);
         pkmGeneratorClient1.connect();
-        if(!pkmGeneratorClient1.isConnected()) {
+        if (!pkmGeneratorClient1.isConnected()) {
             pkmGeneratorClient1 = null;
         }
         pkmGeneratorClient = pkmGeneratorClient1;
@@ -125,16 +125,16 @@ public class SysBotJava implements Runnable {
                     String set = event.getMessage().substring(7).trim();
                     if (!queueContainsUser("twitch", event.getUser().getName())) {
                         byte[] data;
-                        if(!set.equalsIgnoreCase("")) {
-                            if(pkmGeneratorClient != null && pkmGeneratorClient.isConnected()) {
+                        if (!set.equalsIgnoreCase("")) {
+                            if (pkmGeneratorClient != null && pkmGeneratorClient.isConnected()) {
                                 try {
                                     String resp = pkmGeneratorClient.sendShowdownString(set).get();
-                                    if(resp.equalsIgnoreCase("invalid") || resp.equalsIgnoreCase("invalidTrade")) {
+                                    if (resp.equalsIgnoreCase("invalid") || resp.equalsIgnoreCase("invalidTrade")) {
                                         event.reply(event.getTwitchChat(),
                                                 "The requested set is invalid! Please edit and try again.");
                                     } else {
                                         data = HexFormat.of().parseHex(resp);
-                                        if(data.length == 0x158) {
+                                        if (data.length == 0x158) {
                                             if (getQueueSize() == 0) {
                                                 event.reply(event.getTwitchChat(),
                                                         "You have joined the queue. You are first in line!");
@@ -180,27 +180,29 @@ public class SysBotJava implements Runnable {
                         event.reply(event.getTwitchChat(), "@" + event.getUser().getName() + " is not in the queue.");
                     }
                 } else if ((command[0] + " " + command[1]).equalsIgnoreCase("!q update")) {
-                    if(!queueContainsUser("twitch", event.getUser().getName())) {
+                    if (!queueContainsUser("twitch", event.getUser().getName()) && !currentUser.getValue().equalsIgnoreCase(event.getUser().getName())) {
                         event.reply(event.getTwitchChat(),
                                 "You are not in the queue.");
                     } else {
                         String set = event.getMessage().substring(9).trim();
                         byte[] data;
-                        if(!set.equalsIgnoreCase("")) {
-                            if(pkmGeneratorClient != null && pkmGeneratorClient.isConnected()) {
+                        if (!set.equalsIgnoreCase("")) {
+                            if (pkmGeneratorClient != null && pkmGeneratorClient.isConnected()) {
                                 try {
                                     String resp = pkmGeneratorClient.sendShowdownString(set).get();
-                                    if(resp.equalsIgnoreCase("invalid") || resp.equalsIgnoreCase("invalidTrade")) {
+                                    if (resp.equalsIgnoreCase("invalid") || resp.equalsIgnoreCase("invalidTrade")) {
                                         event.reply(event.getTwitchChat(),
                                                 "The requested set is invalid! Please edit and try again.");
                                     } else {
                                         data = HexFormat.of().parseHex(resp);
-                                        if(data.length == 0x158) {
-                                            if (getQueueSize() == 0) {
-                                                event.reply(event.getTwitchChat(),
-                                                        "Your request has been updated.");
+                                        if (data.length == 0x158) {
+                                            event.reply(event.getTwitchChat(),
+                                                    "Your request has been updated.");
+                                            if(currentUser.getValue().equalsIgnoreCase(event.getUser().getName())) {
+                                                currentUser.setRequest(data);
+                                            } else {
+                                                updateQueueEntry("twitch", event.getUser().getName(), data);
                                             }
-                                            updateQueueEntry("twitch", event.getUser().getName(), data);
                                         } else {
                                             event.reply(event.getTwitchChat(),
                                                     "The requested set is invalid! Please edit and try again.");
@@ -218,8 +220,8 @@ public class SysBotJava implements Runnable {
                                     "Please supply a showdown set to update with.");
                         }
                     }
-                } else if((command[0] + " " + command[1]).equalsIgnoreCase("!q leave")) {
-                    if(!queueContainsUser("twitch", event.getUser().getName())) {
+                } else if ((command[0] + " " + command[1]).equalsIgnoreCase("!q leave")) {
+                    if (!queueContainsUser("twitch", event.getUser().getName())) {
                         event.reply(event.getTwitchChat(),
                                 "You are not in the queue.");
                     } else {
@@ -331,9 +333,10 @@ public class SysBotJava implements Runnable {
         return false;
     }
 
-    public void joinUnionRoom() throws InterruptedException, IOException, ExecutionException {
+    public boolean joinUnionRoom() throws InterruptedException, IOException, ExecutionException {
+        sbc.click("B", 1200).get();
         //Join union room
-        sbc.click("Y", 1200).get();
+        sbc.click("Y", 1400).get();
         sbc.click("DRIGHT", 1200).get();
         sbc.click("A", 1200).get();
         sbc.click("A", 1200).get();
@@ -356,14 +359,34 @@ public class SysBotJava implements Runnable {
 
         sbc.click("PLUS", 1500).get();
         sbc.click("A", 3000).get();
+        int retries = 3;
         while (Integer.parseInt(sbc.peek(pointers.get("isRunningSession"), 1).get(), 16) != 1) {
-            redoLinkCode();
+            if(retries > 0) {
+                redoLinkCode();
+                retries--;
+            } else {
+                sbc.click("B", 1200).get();
+                //hideHider();
+                return false;
+            }
         }
         hideHider();
+        long time = TimeUnit.SECONDS.convert(System.nanoTime(), TimeUnit.NANOSECONDS);
         while (Integer.parseInt(sbc.peek(pointers.get("isGaming"), 1).get(), 16) != 1) {
             TimeUnit.MILLISECONDS.sleep(500);
+            if (TimeUnit.SECONDS.convert(System.nanoTime(), TimeUnit.NANOSECONDS) - time > 30) {
+                sbc.click("A", 2000).get();
+                sbc.click("B", 1200).get();
+                sbc.click("B", 6000).get();
+                if(twitchClient != null) {
+                    twitchClient.getChat().sendMessage("EzPzStreamz", "@" + currentUser.getValue() +
+                            " failed to connect to room. Please let the bot connect to the room first and try again now.");
+                }
+                return false;
+            }
         }
         sbc.moveForward(1200).get();
+        return true;
     }
 
     private void redoLinkCode() throws InterruptedException, ExecutionException {
@@ -379,13 +402,13 @@ public class SysBotJava implements Runnable {
 
     private void deleteLinkCodeEntryHalf() throws InterruptedException, ExecutionException {
         sbc.sendCommand("key 42").get();
-        TimeUnit.MILLISECONDS.sleep(500);
+        TimeUnit.MILLISECONDS.sleep(800);
         sbc.sendCommand("key 42").get();
-        TimeUnit.MILLISECONDS.sleep(500);
+        TimeUnit.MILLISECONDS.sleep(800);
         sbc.sendCommand("key 42").get();
-        TimeUnit.MILLISECONDS.sleep(500);
+        TimeUnit.MILLISECONDS.sleep(800);
         sbc.sendCommand("key 42").get();
-        TimeUnit.MILLISECONDS.sleep(500);
+        TimeUnit.MILLISECONDS.sleep(800);
     }
 
     private void startTradeRecruitment() throws ExecutionException, InterruptedException {
@@ -420,9 +443,43 @@ public class SysBotJava implements Runnable {
         String nicknameStr =
                 new String(nickname, StandardCharsets.ISO_8859_1).trim().replaceAll("\0", "").toLowerCase(
                         Locale.ROOT);
-        if (pkmFiles.containsKey(nicknameStr)) {
+        if(nicknameStr.equalsIgnoreCase("tidsid")) {
+            if(currentUser.getKey().equalsIgnoreCase("twitch")) {
+                ByteBuffer bb = ByteBuffer.wrap(pb8, 0xC, 2);
+                bb.order(ByteOrder.LITTLE_ENDIAN);
+                long tid = bb.getShort() & 0xFFFF;
+                bb = ByteBuffer.wrap(pb8, 0xE, 2);
+                bb.order(ByteOrder.LITTLE_ENDIAN);
+                long sid = bb.getShort() & 0xFFFF;
+                int tid7 = (int) ((tid | (sid << 16)) % 1000000);
+                int sid7 = (int) ((tid | (sid << 16)) / 1000000);
+                twitchClient.getChat().sendMessage("EzPzStreamz", "@" + currentUser.getValue() + " Your tid and sid are " + tid7 + " and " + sid7);
+            }
+        }
+        String[] split = nicknameStr.split(" ");
+        String showdownSet;
+        if (split.length > 1) {
+            showdownSet = split[1] + " Shiny: Yes";
+        } else {
+            showdownSet = split[0];
+        }
+        String resp = null;
+        if (pkmGeneratorClient != null && pkmGeneratorClient.isConnected()) {
+            resp = pkmGeneratorClient.sendShowdownString(showdownSet).get();
+            if (resp.equalsIgnoreCase("invalid") || resp.equalsIgnoreCase("invalidTrade")) {
+                resp = null;
+            }
+        }
+
+        if (pkmFiles.containsKey(nicknameStr) || resp != null) {
             sbc.click("B", 1200).get();
-            sbc.poke(pointers.get("b1s1"), "0x" + Util.bytesToHex(Util.encryptPb8(pkmFiles.get(nicknameStr)))).get();
+
+            if (pkmFiles.containsKey(nicknameStr)) {
+                sbc.poke(pointers.get("b1s1"), "0x" + Util.bytesToHex(Util.encryptPb8(pkmFiles.get(nicknameStr))))
+                        .get();
+            } else {
+                sbc.poke(pointers.get("b1s1"), "0x" + resp).get();
+            }
             int state = Integer.parseInt(sbc.peek(pointers.get("netTradePhase"), 1).get(), 16);
             while (state != 3 && state != 4) {
                 sbc.click("A", 1200).get();
@@ -450,6 +507,23 @@ public class SysBotJava implements Runnable {
     public boolean tradeCustom(int currentPhase) throws ExecutionException, InterruptedException, IOException {
         String pb8Str = sbc.peek(pointers.get("tradePB8"), 0x158).get();
         byte[] pb8 = Util.decryptEb8(HexFormat.of().parseHex(pb8Str));
+        byte[] nickname = Arrays.copyOfRange(pb8, 88, 112);
+        String nicknameStr =
+                new String(nickname, StandardCharsets.ISO_8859_1).trim().replaceAll("\0", "").toLowerCase(
+                        Locale.ROOT);
+        if(nicknameStr.equalsIgnoreCase("tidsid")) {
+            if(currentUser.getKey().equalsIgnoreCase("twitch")) {
+                ByteBuffer bb = ByteBuffer.wrap(pb8, 0xC, 2);
+                bb.order(ByteOrder.LITTLE_ENDIAN);
+                long tid = bb.getShort() & 0xFFFF;
+                bb = ByteBuffer.wrap(pb8, 0xE, 2);
+                bb.order(ByteOrder.LITTLE_ENDIAN);
+                long sid = bb.getShort() & 0xFFFF;
+                int tid7 = (int) ((tid | (sid << 16)) % 1000000);
+                int sid7 = (int) ((tid | (sid << 16)) / 1000000);
+                twitchClient.getChat().sendMessage("EzPzStreamz", "@" + currentUser.getValue() + " Your tid and sid are " + tid7 + " and " + sid7);
+            }
+        }
         return checkIsEggOrTradeEvo(currentPhase, pb8);
     }
 
@@ -484,7 +558,23 @@ public class SysBotJava implements Runnable {
     public void startTradeRoute() {
         try {
             Thread.sleep(2000);
-            joinUnionRoom();
+            int retries = 3;
+            boolean joinSuccess = false;
+            while (retries > 0) {
+                joinSuccess = joinUnionRoom();
+                if (joinSuccess) {
+                    break;
+                }
+                retries -= 1;
+            }
+
+            if (!joinSuccess) {
+                if(twitchClient != null) {
+                    twitchClient.getChat().sendMessage("EzPzStreamz", "@" + currentUser.getValue() +
+                            " failed to connect to room. You have been skipped for connectivity problems. Let the bot join the room first next time you join the queue.");
+                }
+                return;
+            }
 
             startTradeRecruitment();
 
@@ -496,7 +586,7 @@ public class SysBotJava implements Runnable {
                 state = Integer.parseInt(sbc.peek(pointers.get("onlineState"), 1).get(), 16);
             }
 
-            if(currentUser.getRequest().length == 0) {
+            if (currentUser.getRequest().length == 0) {
                 injectDefault();
             } else {
                 System.out.println(Util.bytesToHex(currentUser.getRequest()));
@@ -553,10 +643,10 @@ public class SysBotJava implements Runnable {
                 nextPhase = 6;
                 TimeUnit.MILLISECONDS.sleep(500);
 
-                if(currentUser.getRequest().length == 0) {
-                    if(!tradeDefault(currentPhase)) return;
+                if (currentUser.getRequest().length == 0) {
+                    if (!tradeDefault(currentPhase)) return;
                 } else {
-                    if(!tradeCustom(currentPhase)) return;
+                    if (!tradeCustom(currentPhase)) return;
                 }
 
                 if (isSameTradePhase(nextPhase, currentPhase)) return;
@@ -633,7 +723,7 @@ public class SysBotJava implements Runnable {
         sbc.click("Y", 1200).get();
         sbc.click("DDOWN", 1200).get();
         sbc.click("A", 1200).get();
-        Thread.sleep(3000);
+        Thread.sleep(2000);
     }
 
     public void runDisc(TradeEntry<String, String> entry) {
